@@ -1,0 +1,3 @@
+[submodule "fusionlib"]
+	path = _fusionlib
+	url = https://github.com/tanganke/fusionlib
