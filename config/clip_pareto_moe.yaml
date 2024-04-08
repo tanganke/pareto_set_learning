@@ -1,0 +1,53 @@
+# note: all the arguments with ??? are to be filled in runtime
+defaults:
+  - hydra: default
+  - _self_
+
+
+version: null
+train: true
+evaluate: false
+result_dir: ???
+partial: true # if true, then we only apply the weight ensembling MoE to MLPs, else, we apply it to all layers
+quick_evaluation: false # if true, then we only evaluate the model on the first 20 batches of the test dataset
+
+num_devices: 1
+
+# if `model_seen_datasets` is null, then `seen_datasets` is used
+# else, we use `model_seen_datasets` to load and merge the model
+model_seen_datasets: null
+seen_datasets: ${test_datasets}
+test_datasets:
+  - SUN397
+  - Cars
+  # - RESISC45
+  # - EuroSAT
+  # - SVHN
+  # - GTSRB
+  # - MNIST
+  # - DTD
+
+# model arguments
+model: ViT-B-32
+save: ??? # save location of classification heads
+
+# data arguments
+data_location: ??? # location of datasets
+corruption: null
+batch_size: 16
+tta_batch_size: ${batch_size}
+eval_batch_size: ${batch_size}
+num_workers: 8
+
+# weight-ensembling MoE arguments
+init_lambda: 0.3
+router_hidden_layers: 2
+
+# training arguments
+num_steps: 2000
+save_interval: 1000
+alpha: 1 # alpha for dirichlet, if alpha=1, then it is uniform
+lr: 1e-3
+
+# evaluate arguments
+num_evaluation_samples: 11

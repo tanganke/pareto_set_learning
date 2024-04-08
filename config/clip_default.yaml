@@ -18,5 +18,7 @@ save: ??? # save location of classification heads
 
 # data arguments
 data_location: ??? # location of datasets
-batch_size: 64
+batch_size: 16
 num_workers: 16
+
+

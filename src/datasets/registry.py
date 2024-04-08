@@ -5,6 +5,7 @@ import sys
 
 import torch
 from torch.utils.data.dataset import random_split
+import logging
 
 from src.datasets.cars import Cars
 from src.datasets.dtd import DTD
@@ -134,6 +135,7 @@ def get_dataset(
             dataset_name in registry
         ), f"Unsupported dataset: {dataset_name}. Supported datasets: {list(registry.keys())}"
         dataset_class = registry[dataset_name]
+    logging.info(f'loading dataset {dataset_name} from {location}')
     dataset = dataset_class(
         preprocess, location=location, batch_size=batch_size, num_workers=num_workers
     )

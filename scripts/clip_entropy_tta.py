@@ -12,11 +12,22 @@ from clip_checkpoint_path import (
 from fusionlib.merge.average import simple_average
 from fusionlib.utils.torch.parameters import check_parameters_all_equal
 from torch import Tensor, nn
-
+from torch.utils.data import DataLoader
+from lightning.pytorch.loggers import WandbLogger
 from src.clip_eval import eval_single_dataset, eval_single_dataset_preprocess_head
 from src.heads import get_classification_head
 from src.modeling import ClassificationHead, ImageEncoder
 from src.utils import first, timeit_context
+from src.datasets.common import maybe_dictionarize
+
+
+def entropy_loss(logits: Tensor) -> Tensor:
+    """
+    compute the entropy loss
+    """
+    probs = nn.functional.softmax(logits, dim=-1)
+    log_probs = nn.functional.log_softmax(logits, dim=-1)
+    return -torch.mean(torch.sum(probs * log_probs, dim=-1))
 
 
 class Program:
@@ -25,11 +36,99 @@ class Program:
         cfg.save = str(CHECKPOINT_DIR / cfg.model)
         cfg.data_location = str(DATA_DIR)
 
-        self.fabric = L.Fabric(accelerator="cuda", devices=1)
+        for version_idx in itertools.count():
+            self.result_dir = (
+                RESULTS_DIR / "clip_entropy_tta" / f"version_{version_idx}"
+            )
+            if not self.result_dir.exists():
+                break
+        cfg.result_dir = str(self.result_dir)
+        log.info(f"result_dir: {self.result_dir}")
+
+        wandb_logger = WandbLogger(config=OmegaConf.to_container(cfg))
+        self.fabric = L.Fabric(accelerator="cuda", devices=1, loggers=wandb_logger)
         self.fabric.launch()
 
     def run(self):
         self.load_model()
+        self.load_datasets()
+
+        self.entropy_tta()
+
+        self.cleanup()
+
+    def entropy_tta(self):
+        cfg = self.cfg
+        model = self.model
+        classification_heads = self.classification_heads
+        infty_test_loaders = self.infty_test_loaders
+        infty_test_loaders_iters = {
+            task_name: iter(loader) for task_name, loader in infty_test_loaders.items()
+        }
+
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
+        )
+        optimizer: torch.optim.Adam = self.fabric.setup_optimizers(optimizer)
+
+        for step_idx in (
+            pabr := tqdm(range(1, 1 + cfg.num_steps), "entropy tta", dynamic_ncols=True)
+        ):
+            # sum the entropy loss over all tasks
+            total_loss = 0
+            total_correct = 0
+            total_count = 0
+            for task_name in cfg.test_tasks:
+                # get the next batch of data
+                batch = next(infty_test_loaders_iters[task_name])
+                batch = maybe_dictionarize(batch)
+
+                x = self.fabric.to_device(batch["images"])
+                # forward pass
+                features = model(x)
+                logits = classification_heads[task_name](features)
+
+                # compute the entropy loss
+                loss = entropy_loss(logits)
+                total_loss += loss
+
+                # --- for logging ---
+                y = self.fabric.to_device(
+                    batch["labels"]
+                )  # labels are not used for compute the entropy loss, but just compute the accuracy
+                correct = (logits.argmax(dim=-1) == y).sum().item()
+                total_correct += correct
+                total_count += y.size(0)
+                self.fabric.log_dict(
+                    {
+                        f"loss/{task_name}": loss.item(),
+                        f"accuracy/{task_name}": correct / y.size(0),
+                    },
+                    step=step_idx,
+                )
+
+            # update model parameters
+            optimizer.zero_grad()
+            self.fabric.backward(total_loss)
+            optimizer.step()
+
+            # log the loss and accuracy
+            metrics = {
+                "loss": total_loss.item(),
+                "accuracy": total_correct / total_count,
+            }
+            self.fabric.log_dict(metrics, step=step_idx)
+            pabr.set_postfix(metrics)
+            if step_idx % cfg.save_interval == 0:
+                ckpt_dir = self.result_dir / "checkpoints"
+                ckpt_dir.mkdir(parents=True, exist_ok=True)
+                self.fabric.save(
+                    ckpt_dir / f"model_{step_idx}.ckpt",
+                    {"model": model},
+                )
+
+    def cleanup(self):
+        log.info("Exiting")
 
     def load_datasets(self):
         "load the datasets by the given task name"
@@ -46,26 +145,37 @@ class Program:
                 batch_size=cfg.batch_size,
                 num_workers=cfg.num_workers,
             )
-            for task_name in cfg.tasks
+            for task_name in cfg.test_tasks
         }
-        train_loaders = {
-            dataset_name: dataset.train_loader
+        test_loaders = {
+            dataset_name: DataLoader(
+                dataset.test_dataset,
+                batch_size=cfg.batch_size,
+                num_workers=cfg.num_workers,
+                shuffle=False,
+                pin_memory=True,
+                drop_last=False,
+            )
             for dataset_name, dataset in datasets.items()
         }
-        train_loaders_infty = {
-            dataset_name: itertools.cycle(dataloader)
-            for dataset_name, dataloader in train_loaders.items()
-        }
-
-        test_loaders = {
-            dataset_name: dataset.test_loader
+        # shuffled, drop_last=True
+        infty_test_loaders = {
+            dataset_name: itertools.cycle(
+                DataLoader(
+                    dataset.test_dataset,
+                    batch_size=cfg.batch_size,
+                    num_workers=cfg.num_workers,
+                    shuffle=True,
+                    pin_memory=True,
+                    drop_last=True,
+                )
+            )
             for dataset_name, dataset in datasets.items()
         }
 
         self.datasets = datasets
-        self.train_loaders = train_loaders
-        self.train_loaders_infty = train_loaders_infty
         self.test_loaders = test_loaders
+        self.infty_test_loaders = infty_test_loaders
 
     def load_model(self):
         """
@@ -100,7 +210,9 @@ class Program:
         }
 
 
-@hydra.main(config_path=str(CONFIG_DIR), config_name="clip_default", version_base=None)
+@hydra.main(
+    config_path=str(CONFIG_DIR), config_name="clip_entropy_tta", version_base=None
+)
 def main(cfg: DictConfig) -> None:
     (program := Program(cfg)).run()
 

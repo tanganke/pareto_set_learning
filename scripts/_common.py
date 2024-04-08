@@ -36,7 +36,6 @@ from tqdm.autonotebook import tqdm
 from typing_extensions import TypeAlias
 
 log.debug("Finished importing common modules")
-torch.set_float32_matmul_precision("medium")
 
 # COMMON CONSTANTS
 SCRIPT_DIR = Path(__file__).parent.absolute()
