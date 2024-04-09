@@ -1,6 +1,7 @@
-[submodule "fusionlib"]
+[submodule "_fusionlib"]
 	path = _fusionlib
 	url = https://github.com/tanganke/fusionlib
 [submodule "references/pareto-hypernetworks"]
 	path = references/pareto-hypernetworks
 	url = https://github.com/AvivNavon/pareto-hypernetworks.git
+

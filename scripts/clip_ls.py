@@ -73,14 +73,17 @@ class Program:
         self.fabric.launch()
 
     def run(self):
+        cfg = self.cfg
+
         self.load_clip_models()
         self.load_datasets()
 
-        if not os.path.exists(
+        if cfg.train and not os.path.exists(
             self.result_dir / "checkpoints" / f"model_step={self.cfg.num_steps}.ckpt"
         ):
             self.ls_train()
-        self.evaluate()
+        if cfg.evaluate:
+            self.evaluate()
 
     def ls_train(self):
         cfg = self.cfg

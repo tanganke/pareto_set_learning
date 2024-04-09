@@ -12,7 +12,7 @@ from clip_checkpoint_path import (
     finetuned_model_path,
     pretrained_model_path,
 )
-from lightning.fabric.strategies import FSDPStrategy
+from lightning.fabric.strategies import FSDPStrategy, DDPStrategy
 from lightning.fabric.wrappers import _FabricModule
 from torch.utils.data import DataLoader
 
@@ -109,7 +109,11 @@ class CLIPParetoMoEProgram(ABC):
             accelerator="cuda",
             devices=cfg.num_devices,
             loggers=logger,
-            strategy="ddp" if cfg.num_devices > 1 else "auto",
+            strategy=(
+                DDPStrategy(find_unused_parameters=True)
+                if cfg.num_devices > 1
+                else "auto"
+            ),
             # strategy=self._fsdp_strategy() if cfg.num_devices > 1 else "auto",
             callbacks=[DeviceStatsMonitor(), LearningRateMonitor("step")],
         )

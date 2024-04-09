@@ -12,7 +12,7 @@ from clip_checkpoint_path import (
     finetuned_model_path,
     pretrained_model_path,
 )
-from lightning.fabric.strategies import FSDPStrategy
+from lightning.fabric.strategies import FSDPStrategy, DDPStrategy
 from lightning.fabric.wrappers import _FabricModule
 from lightning.pytorch.loggers import TensorBoardLogger
 from open_clip.model import CLIP, ResidualAttentionBlock, VisualTransformer
@@ -88,23 +88,30 @@ class Program:
             accelerator="cuda",
             devices=cfg.num_devices,
             loggers=logger,
-            strategy="ddp" if cfg.num_devices > 1 else "auto",
+            strategy=(
+                DDPStrategy(find_unused_parameters=True)
+                if cfg.num_devices > 1
+                else "auto"
+            ),
             # strategy=self._fsdp_strategy() if cfg.num_devices > 1 else "auto",
             callbacks=[DeviceStatsMonitor(), LearningRateMonitor("step")],
         )
         self.fabric.launch()
 
     def run(self):
+        cfg = self.cfg
+
         self.load_clip_models()
         self.load_datasets()
 
-        if not os.path.exists(
+        if cfg.train and not os.path.exists(
             self.result_dir / "checkpoints" / f"model_step={self.cfg.num_steps}.ckpt"
         ):
-            self.mgda_train()
-        self.evaluate()
+            self.train()
+        if cfg.evaluate:
+            self.evaluate()
 
-    def mgda_train(self):
+    def train(self):
         cfg = self.cfg
         num_objectives = len(
             self.finetuned_models
