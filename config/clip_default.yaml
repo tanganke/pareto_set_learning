@@ -2,6 +2,8 @@ defaults:
   - hydra: default
   - _self_
 
+version: null
+
 tasks:
   - SUN397
   - Cars
@@ -22,3 +24,4 @@ batch_size: 16
 num_workers: 16
 
 
+device: cuda

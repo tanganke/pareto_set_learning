@@ -42,7 +42,7 @@ class Program(CLIPParetoMoEProgram):
         super().__init__(cfg, __file__)
 
     def compute_loss(
-        self, model: Module, ray: Tensor, losses: open_clip.model.Tuple[Tensor]
+        self, model: Module, ray: Tensor, losses:Tuple[Tensor]
     ):
         loss = 0
         for r, l in zip(ray, losses):

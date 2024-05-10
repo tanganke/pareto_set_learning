@@ -92,24 +92,26 @@ def main():
     K = 20
     merge_func = "dis-sum"
 
+    merged_tv = ties_merging(
+        tv_flat_checks,
+        reset_thresh=K,
+        merge_func=merge_func,
+    )
+
     results = defaultdict(list)
     for scaling_coef_ in tqdm(np.linspace(0, 1, 11), desc="scaling_coef"):
         results["scaling_coef"].append(scaling_coef_)
 
-        merged_tv = ties_merging(
-            tv_flat_checks,
-            reset_thresh=K,
-            merge_func=merge_func,
-        )
         merged_check = flat_ptm + scaling_coef_ * merged_tv
         merged_state_dict = vector_to_state_dict(
             merged_check, ptm_check, remove_keys=remove_keys
         )
-        model = deepcopy(finetuned_models[args.tasks[0]])
-        model.transformer.load_state_dict(merged_state_dict)
-        model = model.to("cuda")
 
         for task in args.tasks:
+            model = deepcopy(finetuned_models[task])
+            model.transformer.load_state_dict(merged_state_dict)
+            model = model.to("cuda")
+
             val_dataloader = get_val_dataloader(task)
             acc = eval_model(model, val_dataloader)
             results[task].append(acc)

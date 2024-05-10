@@ -110,7 +110,7 @@ class CLIPParetoMoEProgram(ABC):
             devices=cfg.num_devices,
             loggers=logger,
             strategy=(
-                DDPStrategy(find_unused_parameters=True)
+                DDPStrategy(find_unused_parameters=False)
                 if cfg.num_devices > 1
                 else "auto"
             ),

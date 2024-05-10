@@ -75,7 +75,10 @@ class EPO:
 
         grads = []
         for i, loss in enumerate(losses):
-            g = torch.autograd.grad(loss, parameters, retain_graph=True)
+            g = torch.autograd.grad(
+                loss, parameters, retain_graph=True, allow_unused=True
+            )
+            g = tuple(filter(lambda x: x is not None, g))
             flat_grad = self._flattening(g)
             grads.append(flat_grad.data)
 

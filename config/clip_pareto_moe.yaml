@@ -47,7 +47,7 @@ router_hidden_layers: 2
 num_steps: 2000
 save_interval: 1000
 alpha: 1 # alpha for dirichlet, if alpha=1, then it is uniform
-lr: 1e-3
+lr: 1e-2
 
 # evaluate arguments
 num_evaluation_samples: 11

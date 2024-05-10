@@ -1,0 +1,41 @@
+# note: all the arguments with ??? are to be filled in runtime
+defaults:
+  - hydra: default
+  - _self_
+
+model: cache/models/gpt2
+
+version: null
+train: true
+evaluate: false
+result_dir: ???
+partial: true # if true, then we only apply the weight ensembling MoE to MLPs, else, we apply it to all layers
+
+num_devices: 1
+
+tasks:
+  - CoLA
+  - MNLI
+  # - MRPC
+  # - QNLI
+  # - QQP
+  # - RTE
+  # - SST2
+  # - STSB
+
+# data arguments
+batch_size: 4
+num_workers: 8
+
+# weight-ensembling MoE arguments
+init_lambda: 0.3
+router_hidden_layers: 2
+
+# training arguments
+num_steps: 2000
+save_interval: 1000
+alpha: 1 # alpha for dirichlet, if alpha=1, then it is uniform
+lr: 1e-2
+
+# evaluate arguments
+num_evaluation_samples: 11

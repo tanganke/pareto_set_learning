@@ -1,0 +1,17 @@
+defaults:
+  - hydra: default
+  - _self_
+
+version: null
+
+tasks:
+  - CoLA
+  - MNLI
+  - MRPC
+  - QNLI
+  - QQP
+  - RTE
+  - SST2
+  - STSB
+
+model: ~/models/gpt2
