@@ -4,7 +4,7 @@ log = logging.getLogger(__name__)
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
-
+from copy import deepcopy
 import pandas as pd
 import torch
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -33,6 +33,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block
 from src.module.utils import print_trainable_parameters
 from torch.utils.data.distributed import DistributedSampler
 from lightning.fabric.strategies import FSDPStrategy, DDPStrategy
+from lightning.fabric.strategies.dp import DataParallelStrategy
 
 
 def generate_simplex_grid(n, m):
@@ -94,11 +95,7 @@ class GPT2ParetoMoEProgram(ABC):
             accelerator="cuda",
             devices=cfg.num_devices,
             loggers=logger,
-            strategy=(
-                DDPStrategy(find_unused_parameters=False)
-                if cfg.num_devices > 1
-                else "auto"
-            ),
+            strategy=(DDPStrategy() if cfg.num_devices > 1 else "auto"),
             # strategy=self._fsdp_strategy() if cfg.num_devices > 1 else "auto",
             callbacks=[DeviceStatsMonitor(), LearningRateMonitor("step")],
         )
@@ -215,6 +212,7 @@ class GPT2ParetoMoEProgram(ABC):
                 for task in cfg.tasks
             }
 
+    @torch.no_grad()
     def evaluate(self):
         results = defaultdict(list)
         cfg = self.cfg
@@ -283,7 +281,7 @@ class GPT2ParetoMoEProgram(ABC):
                 log.info(df)
 
     def compute_loss(self, model: nn.Module, ray: Tensor, losses: Tuple[Tensor]):
-        pass
+        raise NotImplementedError()
 
     def train(self):
         cfg = self.cfg
@@ -333,37 +331,36 @@ class GPT2ParetoMoEProgram(ABC):
             ).to(device)
             ParetoWeightEnsemblingModule.set_preferenec_vector(backbone, ray)
 
-            with torch.autograd.set_detect_anomaly(True):
-                losses = []
-                for dataset_idx, dataset_name in enumerate(cfg.tasks):
-                    batch = next(self.train_loader_iters[dataset_idx])
-                    forward_model.num_labels = self.finetuned_models[
-                        dataset_name
-                    ].num_labels
-                    outputs = torch.func.functional_call(
-                        forward_model,
-                        parameter_and_buffer_dicts={
-                            "score." + k: v
-                            for k, v in classifiers[dataset_name]
-                            .state_dict(keep_vars=True)
-                            .items()
-                        },
-                        args=tuple(),
-                        kwargs=dict(
-                            input_ids=batch["input_ids"].to(device),
-                            attention_mask=batch["attention_mask"].to(device),
-                            labels=batch["labels"].to(device),
-                        ),
-                        strict=False,
-                    )
-                    _loss = outputs.loss
-                    losses.append(_loss)
+            losses = []
+            for dataset_idx, dataset_name in enumerate(cfg.tasks):
+                batch = next(self.train_loader_iters[dataset_idx])
+                forward_model.num_labels = self.finetuned_models[
+                    dataset_name
+                ].num_labels
+                outputs = torch.func.functional_call(
+                    forward_model,
+                    parameter_and_buffer_dicts={
+                        "score." + k: v
+                        for k, v in classifiers[dataset_name]
+                        .state_dict(keep_vars=True)
+                        .items()
+                    },
+                    args=tuple(),
+                    kwargs=dict(
+                        input_ids=batch["input_ids"].to(device),
+                        attention_mask=batch["attention_mask"].to(device),
+                        labels=batch["labels"].to(device),
+                    ),
+                    strict=False,
+                )
+                _loss = outputs.loss
+                losses.append(_loss)
 
-                loss = self.compute_loss(backbone, ray, losses)
+            loss = self.compute_loss(backbone, ray, losses)
 
-                optimizer.zero_grad()
-                self.fabric.backward(loss)
-                optimizer.step()
+            optimizer.zero_grad()
+            self.fabric.backward(loss)
+            optimizer.step()
 
             lr_scheduler.step()
 

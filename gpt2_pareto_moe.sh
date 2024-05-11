@@ -10,7 +10,7 @@ function run_cmd() {
 function train() {
     run_cmd python scripts/gpt2_pareto_${method}.py train=true evaluate=false \
         version=${version} tasks=${tasks} model=${model} partial=$partial \
-        alpha=1 lr=1e-2 num_devices=${num_devices} batch_size=${batch_size} init_lambda=${init_lambda} \
+        alpha=1 lr=${lr} num_devices=${num_devices} batch_size=${batch_size} init_lambda=${init_lambda} \
         num_steps=4000 save_interval=1000
 }
 
@@ -54,7 +54,10 @@ function run_version() {
         partial=true
         tasks="[mrpc,mnli,cola,sst2,qnli,qqp,rte]"
         init_lambda=0.3
-        train && evaluate
+        train
+        run_cmd python scripts/gpt2_pareto_${method}.py train=false evaluate=true batch_size=64 \
+            version=${version} tasks=${tasks} model=${model} partial=$partial \
+            num_steps=4000 save_interval=1000 num_evaluation_samples=equal_weight
         ;;
     *)
         echo "Invalid version"
@@ -69,6 +72,7 @@ function run_version() {
 # Default values
 num_devices=1
 model=gpt2
+lr=1e-2
 
 # Parse command-line options
 while (("$#")); do
