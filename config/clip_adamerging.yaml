@@ -1,0 +1,40 @@
+# Layer-wise AdaMerging (Yang et al., ICLR 2024)
+defaults:
+  - hydra: default
+  - _self_
+
+version: null
+train: true
+evaluate: true
+result_dir: ???
+
+test_datasets:
+  - SUN397
+  - Cars
+  - RESISC45
+  - EuroSAT
+  - SVHN
+  - GTSRB
+  - MNIST
+  - DTD
+
+# model arguments
+model: ViT-B-32
+save: ???
+
+# data arguments
+data_location: ???
+batch_size: 16
+tta_batch_size: ${batch_size}
+eval_batch_size: 64
+num_workers: 8
+
+device: cuda
+
+# merging coefficients
+init_lambda: 0.3
+clamp_weights: false
+
+# test-time adaptation
+num_steps: 500
+lr: 1e-3

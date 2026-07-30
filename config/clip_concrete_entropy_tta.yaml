@@ -1,0 +1,18 @@
+defaults:
+  - clip_default
+  - _self_
+
+test_tasks: ${tasks}
+
+num_steps: 1000
+save_interval: 100
+
+# optimizer arguments
+lr: 1e-3
+weight_decay: 0
+
+result_dir: ???
+
+# Concrete mask arguments
+init_value: 0
+temperature: 0.5

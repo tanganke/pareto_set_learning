@@ -1,0 +1,66 @@
+# Config for the recent preference-conditioned merging baselines
+# (Pareto Merging, ICML 2025; PaLoRA, ICLR 2025).
+# Everything not listed here mirrors `clip_pareto_moe.yaml` so the training and
+# evaluation protocol is identical to our method.
+defaults:
+  - hydra: default
+  - _self_
+
+version: null
+train: true
+evaluate: false
+result_dir: ???
+partial: true # if true, only the MLPs carry the preference-conditioned residual
+quick_evaluation: false
+
+num_devices: 1
+
+# which baseline to run: pm | palora
+baseline: pm
+
+model_seen_datasets: null
+seen_datasets: ${test_datasets}
+test_datasets:
+  - SUN397
+  - Cars
+
+# model arguments
+model: ViT-B-32
+save: ???
+
+# data arguments
+data_location: ???
+corruption: null
+batch_size: 16
+tta_batch_size: ${batch_size}
+eval_batch_size: ${batch_size}
+num_workers: 8
+
+# preference-independent base merge (task arithmetic scaling factor)
+init_lambda: 0.3
+# unused by these baselines, kept so the shared program can be reused
+router_hidden_layers: 2
+
+# low-rank structure
+rank: 16
+
+# Pareto Merging: smooth Tchebycheff temperature and Frobenius regularization
+stch_rho: 0.1
+pm_beta: 0.1
+
+# PaLoRA: adapter scaling, number of deterministic base rays, annealing temperature
+lora_alpha: 1.0
+palora_num_rays: 11
+palora_temperature: 2.0
+
+# training arguments
+num_steps: 4000
+save_interval: 1000
+alpha: 1 # dirichlet concentration (used by pm)
+lr: 1e-2
+
+# evaluate arguments
+num_evaluation_samples: 11
+
+# optional path to layer-wise base-merging coefficients (e.g. AdaMerging output)
+base_merge_weight: null

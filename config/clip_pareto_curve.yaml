@@ -1,0 +1,21 @@
+defaults:
+  - hydra: default
+  - _self_
+
+tasks:
+  - SUN397
+  - Cars
+
+# model arguments
+model: ViT-B-32
+save: ??? # save location of classification heads
+
+# data arguments
+data_location: ??? # location of datasets
+batch_size: 32
+num_workers: 0
+
+# NEB arguments
+k: 0
+num_samples: 100
+num_steps: 100
