@@ -300,7 +300,10 @@ class ParetoWeightEnsemblingModule(nn.Module):
 
     @staticmethod
     def set_preferenec_vector(model: nn.Module, preference_vector: Tensor):
-        if isinstance(model, ParetoWeightEnsemblingModule):
+        # duck-typed on `_set_preference_vector` so that the preference-conditioned
+        # baselines in `src.module.pareto_baselines` can reuse the same training and
+        # evaluation loops.
+        if hasattr(model, "_set_preference_vector"):
             model._set_preference_vector(preference_vector)
         for name, module in model.named_children():
             if isinstance(module, nn.Module):

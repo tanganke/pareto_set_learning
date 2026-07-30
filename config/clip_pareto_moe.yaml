@@ -51,3 +51,6 @@ lr: 1e-2
 
 # evaluate arguments
 num_evaluation_samples: 11
+
+# optional path to layer-wise base-merging coefficients (e.g. AdaMerging output)
+base_merge_weight: null

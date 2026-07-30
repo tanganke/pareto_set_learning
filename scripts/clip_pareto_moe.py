@@ -21,6 +21,7 @@ from src.datasets.common import maybe_dictionarize
 from src.heads import get_classification_head
 from src.modeling import ClassificationHead, ImageEncoder
 from src.module.dict_moe import ParetoWeightEnsemblingModule
+from src.module.pareto_baselines import build_base_merged_state_dict
 from src.module.utils import get_by_name, print_trainable_parameters, set_by_name
 from src.task_vectors import StateDict, TaskVector, state_dict_mean
 from src.utils import timeit_context
@@ -72,6 +73,48 @@ def generate_simplex_grid(n, m):
         grid_points.append(point)
 
     return np.array(grid_points, dtype=np.float32)
+
+
+def build_preference_vectors(spec, num_objectives: int) -> np.ndarray:
+    R"""Build the set of preference vectors used at evaluation time.
+
+    ``spec`` may be
+
+    ``"equal_weight"``
+        the single vector :math:`[1/K, \dots, 1/K]`.
+    ``"onehot"``
+        the :math:`K` unit vectors.
+    ``"priority"``
+        the :math:`K` vectors that put weight :math:`0.5` on one objective and
+        spread the remaining :math:`0.5` uniformly over the others. This is the
+        "priority preference" protocol of Pareto Merging (Chen & Kwok, 2025), and
+        it is a far more informative operating point than a one-hot vector when
+        :math:`K` is large.
+    ``"equal_weight+priority"``
+        the equal-weight vector followed by the :math:`K` priority vectors.
+    an integer ``m``
+        a uniform grid of the simplex with ``m`` points per edge.
+    """
+    equal = [[1.0 / num_objectives] * num_objectives]
+    onehot = np.eye(num_objectives, dtype=np.float32).tolist()
+    rest = 0.5 / max(num_objectives - 1, 1)
+    priority = [
+        [0.5 if i == k else rest for i in range(num_objectives)]
+        for k in range(num_objectives)
+    ]
+
+    if isinstance(spec, str):
+        table = {
+            "equal_weight": equal,
+            "onehot": onehot,
+            "priority": priority,
+            "equal_weight+priority": equal + priority,
+            "equal_weight+onehot": equal + onehot,
+        }
+        if spec not in table:
+            raise ValueError(f"unknown num_evaluation_samples={spec!r}")
+        return np.array(table[spec], dtype=np.float32)
+    return generate_simplex_grid(num_objectives, int(spec))
 
 
 class CLIPParetoMoEProgram(ABC):
@@ -145,6 +188,31 @@ class CLIPParetoMoEProgram(ABC):
     def compute_loss(self, model: nn.Module, ray: Tensor, losses: Tuple[Tensor]):
         pass
 
+    def load_base_merge_weight(self) -> Optional[Tensor]:
+        """Optional ``(K, num_params)`` tensor of layer-wise base-merging coefficients.
+
+        Set ``base_merge_weight=<path>`` to build the preference-independent part of the
+        model from AdaMerging's learned coefficients instead of a single ``init_lambda``.
+        """
+        path = self.cfg.get("base_merge_weight", None)
+        if path is None:
+            return None
+        log.info(f"loading layer-wise base merging coefficients from {path}")
+        return torch.load(path, map_location="cpu")
+
+    def sample_ray(self, step_idx: int, num_objectives: int, device) -> Tensor:
+        """Sample the preference ray used at training step ``step_idx``.
+
+        Subclasses may override this to implement a different preference schedule
+        (e.g. PaLoRA's deterministic annealed schedule).
+        """
+        cfg = self.cfg
+        return torch.from_numpy(
+            np.random.dirichlet((cfg.alpha,) * num_objectives, 1)
+            .astype(np.float32)
+            .flatten()
+        ).to(device)
+
     def train(self):
         cfg = self.cfg
 
@@ -175,11 +243,7 @@ class CLIPParetoMoEProgram(ABC):
             range(1, 1 + cfg.num_steps), "training", dynamic_ncols=True
         ):
             # sample a preference ray
-            ray = torch.from_numpy(
-                np.random.dirichlet((cfg.alpha,) * num_objectives, 1)
-                .astype(np.float32)
-                .flatten()
-            ).to(device)
+            ray = self.sample_ray(step_idx, num_objectives, device)
             ParetoWeightEnsemblingModule.set_preferenec_vector(model, ray)
 
             losses = []
@@ -223,13 +287,9 @@ class CLIPParetoMoEProgram(ABC):
         self.classification_heads = {
             t: h.to(self.fabric.device) for t, h in self.classification_heads.items()
         }
+        eval_steps = cfg.get("eval_steps", None) or [4000, 3000, 2000, 1000]
         for step_idx in tqdm(
-            [
-                4000,
-                3000,
-                2000,
-                1000,
-            ],
+            list(eval_steps),
             "evaluating",
             leave=False,
         ):
@@ -247,14 +307,9 @@ class CLIPParetoMoEProgram(ABC):
             model = self.fabric.setup_module(model)
             model.eval()
 
-            if cfg.num_evaluation_samples == "equal_weight":
-                uniform_grid = np.array(
-                    [[1 / num_objectives] * num_objectives], dtype=np.float32
-                )
-            else:
-                uniform_grid = generate_simplex_grid(
-                    num_objectives, cfg.num_evaluation_samples
-                )
+            uniform_grid = build_preference_vectors(
+                cfg.num_evaluation_samples, num_objectives
+            )
             for ray_idx, ray in tqdm(enumerate(uniform_grid), "evaluating samples"):
                 results["step"].append(step_idx)
                 # sample a preference ray
@@ -359,19 +414,14 @@ class CLIPParetoMoEProgram(ABC):
                 # weight ensembling only the MLPs, merge the remaining layers using task arithmetic
 
                 # model fusion
-                sd = {}
-                base_sd = model.state_dict()
-                for name in base_sd.keys():
-                    sd[name] = base_sd[name]
-                for m in self.finetuned_models.values():
-                    m = cast(ImageEncoder, m)
-                    expert_sd = m.state_dict()
-                    for name in expert_sd.keys():
-                        sd[name] = (
-                            sd[name]
-                            + (expert_sd[name] - base_sd[name]) * self.cfg.init_lambda
-                        )
-                model.load_state_dict(sd)
+                model.load_state_dict(
+                    build_base_merged_state_dict(
+                        pretrained_model=model,
+                        finetuned_models=list(self.finetuned_models.values()),
+                        init_lambda=self.cfg.init_lambda,
+                        merge_weight=self.load_base_merge_weight(),
+                    )
+                )
 
                 # fix all parameters
                 model.requires_grad_(False)
@@ -401,19 +451,14 @@ class CLIPParetoMoEProgram(ABC):
                 # weight ensembling all the layers
 
                 # model fusion
-                sd = {}
-                base_sd = model.state_dict()
-                for name in base_sd.keys():
-                    sd[name] = base_sd[name]
-                for m in self.finetuned_models.values():
-                    m = cast(ImageEncoder, m)
-                    expert_sd = m.state_dict()
-                    for name in expert_sd.keys():
-                        sd[name] = (
-                            sd[name]
-                            + (expert_sd[name] - base_sd[name]) * self.cfg.init_lambda
-                        )
-                model.load_state_dict(sd)
+                model.load_state_dict(
+                    build_base_merged_state_dict(
+                        pretrained_model=model,
+                        finetuned_models=list(self.finetuned_models.values()),
+                        init_lambda=self.cfg.init_lambda,
+                        merge_weight=self.load_base_merge_weight(),
+                    )
+                )
                 model.requires_grad_(False)
 
                 for name in [
